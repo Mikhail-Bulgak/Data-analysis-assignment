@@ -1,0 +1,31 @@
+1. Написать SQL  запрос, выводящий список: отдел; сотрудник с указанием префикса по полу (г-н, г-жа) (например: Риски | г-н Бегинс).
+
+SELECT d.name AS department,
+    CASE 
+        WHEN p.name LIKE IN ('%ая', '%на', '%ова', '%ева') THEN 'г-жа ' || p.name  -- однако человек с фамилией Поттер тоже может быть г-жа, как и с фамилией Петренко, Сапега и пр. Нужны еще другие данные для точного решения.
+        ELSE 'г-н ' || p.name
+    END AS employee
+FROM Personal p LEFT JOIN Department d ON p.id_dep = d.id;
+
+
+
+2. Написать SQL  запрос, выводящий отсортированный список сотрудников, по количеству гласных букв в фамилии.
+
+SELECT name, LENGTH(LOWER(name)) - LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(name), 'а', ''), 'е', ''), 'и', ''), 'о', ''), 'у', ''), 'ю', ''), 'я', '')) AS difference
+FROM Personal
+ORDER BY difference DESC;
+
+
+3. Получить отчет в разрезе сотрудников отдела, имеющих максимальную и минимальную зарплату в отделе.
+
+
+WITH salarystats AS (
+    SELECT id_dep, MAX(sal) AS max_salary, MIN(sal) AS min_salary
+    FROM Personal
+    GROUP BY id_dep
+)
+SELECT d.name AS department, p.name AS employee, p.sal
+FROM Personal p JOIN salarystats ss ON p.id_dep = ss.id_dep
+                JOIN Department d ON p.id_dep = d.id
+WHERE p.sal = ss.max_salary OR p.sal = ss.min_salary
+ORDER BY d.name, p.sal DESC;
