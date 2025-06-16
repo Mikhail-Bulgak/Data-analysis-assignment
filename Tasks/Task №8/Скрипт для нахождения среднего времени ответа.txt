@@ -1,49 +1,49 @@
 WITH message_blocks AS (
 	SELECT *, 
-		   ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY created_at) AS num_ord
+		ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY created_at) AS num_ord
 	FROM  test.chat_messages
 	WHERE message_id NOT IN (
-						SELECT message_id 
-						FROM  test.chat_messages
-						WHERE "type" = 'outgoing_chat_message' AND created_by = 0)
+				 SELECT message_id 
+				 FROM  test.chat_messages
+				 WHERE "type" = 'outgoing_chat_message' AND created_by = 0)
 	ORDER BY entity_id, created_at
 ),
 	selected_block AS (
 	SELECT *,
-			ROW_NUMBER() OVER (PARTITION BY m.entity_id ORDER BY m.created_at) AS new_ord
+		ROW_NUMBER() OVER (PARTITION BY m.entity_id ORDER BY m.created_at) AS new_ord
 	FROM message_blocks m
 	WHERE m.message_id NOT IN (
-							SELECT m.message_id 
-							FROM  message_blocks m
-							WHERE "type" = 'outgoing_chat_message' AND m.num_ord = 1)
+				   SELECT m.message_id 
+				   FROM  message_blocks m
+				   WHERE "type" = 'outgoing_chat_message' AND m.num_ord = 1)
 	ORDER BY entity_id, created_at
 ),
 	rank_block AS (
 	SELECT *,
-			ROW_NUMBER() OVER (PARTITION BY s.entity_id, s."type" ORDER BY s.entity_id, s.created_at) AS ranks
+		ROW_NUMBER() OVER (PARTITION BY s.entity_id, s."type" ORDER BY s.entity_id, s.created_at) AS ranks
 	FROM selected_block s
 ),
 	first_question_block AS (
 	SELECT r.entity_id,
-		   r.created_by,
-		   r.created_at AS time_answer,
-			MIN(created_at) OVER (PARTITION BY r.entity_id, r.ranks) AS time_first_question
+	       r.created_by,
+	       r.created_at AS time_answer,
+	       MIN(created_at) OVER (PARTITION BY r.entity_id, r.ranks) AS time_first_question
 	FROM rank_block r
 ),
 	time_for_answer AS (
 	SELECT *, 
-			to_timestamp(f.time_answer) AS date_answer, to_timestamp(f.time_first_question) AS date_question,
-			CASE 
-				WHEN date_part('day', to_timestamp(f.time_answer)) > date_part('day', to_timestamp(f.time_first_question)) 
-						AND date_part('hour', to_timestamp(f.time_answer)) >= 9
-						AND date_part('minute', to_timestamp(f.time_answer)) >= 30
-					THEN ROUND(EXTRACT(EPOCH FROM ((to_timestamp(f.time_answer) - INTERVAL '09:30:00')::timestamp - to_timestamp(f.time_first_question)))/60, 2)
-				WHEN date_part('day', to_timestamp(f.time_answer)) > date_part('day', to_timestamp(f.time_first_question)) 
-						AND date_part('hour', to_timestamp(f.time_answer)) < 9
-						AND date_part('minute', to_timestamp(f.time_answer)) < 30
-					THEN ROUND(EXTRACT(EPOCH FROM ((date(to_timestamp(f.time_answer))+INTERVAL '00:00:00')::timestamp - to_timestamp(f.time_first_question)))/60, 2)
-				ELSE ROUND(EXTRACT(EPOCH FROM (to_timestamp(f.time_answer) - to_timestamp(f.time_first_question)))/60, 2) 
-			END AS diff
+		to_timestamp(f.time_answer) AS date_answer, to_timestamp(f.time_first_question) AS date_question,
+		CASE 
+			WHEN date_part('day', to_timestamp(f.time_answer)) > date_part('day', to_timestamp(f.time_first_question)) 
+					AND date_part('hour', to_timestamp(f.time_answer)) >= 9
+					AND date_part('minute', to_timestamp(f.time_answer)) >= 30
+				THEN ROUND(EXTRACT(EPOCH FROM ((to_timestamp(f.time_answer) - INTERVAL '09:30:00')::timestamp - to_timestamp(f.time_first_question)))/60, 2)
+			WHEN date_part('day', to_timestamp(f.time_answer)) > date_part('day', to_timestamp(f.time_first_question)) 
+					AND date_part('hour', to_timestamp(f.time_answer)) < 9
+					AND date_part('minute', to_timestamp(f.time_answer)) < 30
+				THEN ROUND(EXTRACT(EPOCH FROM ((date(to_timestamp(f.time_answer))+INTERVAL '00:00:00')::timestamp - to_timestamp(f.time_first_question)))/60, 2)
+			ELSE ROUND(EXTRACT(EPOCH FROM (to_timestamp(f.time_answer) - to_timestamp(f.time_first_question)))/60, 2) 
+		END AS diff
 	FROM first_question_block f
 	WHERE f.created_by <> 0
 	ORDER BY f.entity_id, f.time_answer
@@ -60,13 +60,13 @@ WITH message_blocks AS (
 	ORDER BY r.rop_name,  m.name_mop, "Время ответа (мин.)"
 )
 SELECT  "ID сотрудника",
-		"Имя",
-		"Руководитель",
-		AVG("Время ответа (мин.)") AS "Среднее время ответа (мин.)"
+	"Имя",
+	"Руководитель",
+	AVG("Время ответа (мин.)") AS "Среднее время ответа (мин.)"
 FROM data_for_dashboard d
 GROUP BY "ID сотрудника",
-		"Имя",
-		"Руководитель"
+	 "Имя",
+	 "Руководитель"
 ORDER BY "Руководитель", "Имя"
 
 
