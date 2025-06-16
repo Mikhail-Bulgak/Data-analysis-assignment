@@ -1,0 +1,120 @@
+WITH message_blocks AS (
+	SELECT *, 
+		   ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY created_at) AS num_ord
+	FROM  test.chat_messages
+	WHERE message_id NOT IN (
+						SELECT message_id 
+						FROM  test.chat_messages
+						WHERE "type" = 'outgoing_chat_message' AND created_by = 0)
+	ORDER BY entity_id, created_at
+),
+	selected_block AS (
+	SELECT *,
+			ROW_NUMBER() OVER (PARTITION BY m.entity_id ORDER BY m.created_at) AS new_ord
+	FROM message_blocks m
+	WHERE m.message_id NOT IN (
+							SELECT m.message_id 
+							FROM  message_blocks m
+							WHERE "type" = 'outgoing_chat_message' AND m.num_ord = 1)
+	ORDER BY entity_id, created_at
+),
+	rank_block AS (
+	SELECT *,
+			ROW_NUMBER() OVER (PARTITION BY s.entity_id, s."type" ORDER BY s.entity_id, s.created_at) AS ranks
+	FROM selected_block s
+),
+	first_question_block AS (
+	SELECT r.entity_id,
+		   r.created_by,
+		   r.created_at AS time_answer,
+			MIN(created_at) OVER (PARTITION BY r.entity_id, r.ranks) AS time_first_question
+	FROM rank_block r
+),
+	time_for_answer AS (
+	SELECT *, 
+			to_timestamp(f.time_answer) AS date_answer, to_timestamp(f.time_first_question) AS date_question,
+			CASE 
+				WHEN date_part('day', to_timestamp(f.time_answer)) > date_part('day', to_timestamp(f.time_first_question)) 
+						AND date_part('hour', to_timestamp(f.time_answer)) >= 9
+						AND date_part('minute', to_timestamp(f.time_answer)) >= 30
+					THEN ROUND(EXTRACT(EPOCH FROM ((to_timestamp(f.time_answer) - INTERVAL '09:30:00')::timestamp - to_timestamp(f.time_first_question)))/60, 2)
+				WHEN date_part('day', to_timestamp(f.time_answer)) > date_part('day', to_timestamp(f.time_first_question)) 
+						AND date_part('hour', to_timestamp(f.time_answer)) < 9
+						AND date_part('minute', to_timestamp(f.time_answer)) < 30
+					THEN ROUND(EXTRACT(EPOCH FROM ((date(to_timestamp(f.time_answer))+INTERVAL '00:00:00')::timestamp - to_timestamp(f.time_first_question)))/60, 2)
+				ELSE ROUND(EXTRACT(EPOCH FROM (to_timestamp(f.time_answer) - to_timestamp(f.time_first_question)))/60, 2) 
+			END AS diff
+	FROM first_question_block f
+	WHERE f.created_by <> 0
+	ORDER BY f.entity_id, f.time_answer
+), 
+	data_for_dashboard AS (
+	SELECT ta.created_by AS "ID сотрудника",
+		   m.name_mop AS "Имя",
+		   r.rop_name AS "Руководитель",
+		   ta.date_question AS "Дата и время вопроса",
+		   ta.date_answer AS "Дата и время ответа",
+		   ta.diff AS "Время ответа (мин.)"
+	FROM time_for_answer ta LEFT JOIN test.managers m ON ta.created_by = m.mop_id
+							LEFT JOIN test.rops r ON m.rop_id::integer = r.rop_id
+	ORDER BY r.rop_name,  m.name_mop, "Время ответа (мин.)"
+)
+SELECT  "ID сотрудника",
+		"Имя",
+		"Руководитель",
+		AVG("Время ответа (мин.)") AS "Среднее время ответа (мин.)"
+FROM data_for_dashboard d
+GROUP BY "ID сотрудника",
+		"Имя",
+		"Руководитель"
+ORDER BY "Руководитель", "Имя"
+
+
+ПОЯСНЕНИЯ
+Изначально в данных присутствовали неточности. Похоже, что тестовая выборка делалась срезом по датам.
+Поэтому в данных порой присутствовали ответы от менеджеров, но не ясно на какие вопросы. Также были странности с некоторыми
+клиентами, которые судя по записям сами задавали вопрос и сами же на наго отвечали. 
+Т.е. есть записи с incoming и outgoing по ID равному нулю.
+В общем, прежде чем приступать к аналитике данные пришлось изучить, почистить и привести в нормальный вид.
+
+- message_blocks - этот блок как раз и занимается очисткой. Мы исключает ответы, где 'outgoing_chat_message' и created_by = 0.
+	Оставляем только incoming_chat_message равные нулю, а также сортируем наших клиентов по порядку по номерам и времени сообщения.
+- selected_block - здесь мы избавляемся от записей с ответами на непонятно какие сообщения. Т.е. блок вопрос-ответ, вдруг начинается с ответа менеджера. А так быть не должно. И снова сортируем наших клиентов по порядку по номерам и времени сообщения в новом столбце.
+- rank_block - создаем столбце с признаками "вопрос-ответ", опять же учитывая условие задачи, что если сначала несколько вопросов,
+	то отсчет должен идти от самого первого вопроса.
+- first_question_block - в этом блоке создаем столбец со временем самого первого вопроса от клиента.
+- time_for_answer - в этом блоке считаем время. Создадим столбец для расчета разности во времени между вопросом и ответом. 
+	Опять же исходя из условий о времени работы менеджеров и порядке расчета.
+- data_for_dashboard - делаем запрос на формирование датасета для дальнейшего расчета среднего и формирования дашборда.
+	И добавляем данные с помощью JOIN-ов для того чтобы видеть имена сотрудников и их руководителей.
+И в завершение выводим результирующий запрос SELECT, в котором проведем расчёт среднего времени ответа по менеджерам. 
+
+В итоге имеем:
+
+ID сотрудника|Имя                |Руководитель|Среднее время ответа (мин.)|
+-------------+-------------------+------------+---------------------------+
+     11490270|Аня и Ксюша        |Катя РОП    |        27.8478207109737249|
+     11448610|Вика и Катя        |Катя РОП    |        25.5357918968692449|
+      6645315|Гюнель и Илина     |Катя РОП    |        17.1733809523809524|
+     10262513|Ира и Варя         |Катя РОП    |        32.5457773109243697|
+     11490278|Ксюша и Джамиля    |Катя РОП    |        16.7548905109489051|
+     10465254|Настя и Даша       |Катя РОП    |         6.6534876543209877|
+      6744792|Юля и Наташа       |Катя РОП    |        23.3200941176470588|
+     11188802|Даша и Влада       |Полина РОП  |        59.4636101083032491|
+      6780177|Даша и Даша        |Полина РОП  |        21.0279333333333333|
+      7996770|Лиза и Ева         |Полина РОП  |        11.7098701298701299|
+     10262497|Мария и Соня       |Полина РОП  |        19.1269035532994924|
+     11394130|Настя и Саша       |Полина РОП  |        19.9939490445859873|
+     10262485|Соня и Катя        |Полина РОП  |        26.2789962825278810|
+      8558094|Алина и Юля        |Эля РОП     |        15.4560434782608696|
+     11550890|Ангелина Милованова|Эля РОП     |         5.9796721311475410|
+      7408305|Влада и Настя      |Эля РОП     |         4.7136956521739130|
+     11241942|Даша и Карина      |Эля РОП     |        10.1530344827586207|
+     10262493|Ками и Мила        |Эля РОП     |        18.0239823008849558|
+     10465690|Настя и Малика     |Эля РОП     |        21.4042629482071713|
+     11394126|Полина Мирзоян     |Эля РОП     |        10.4264583333333333|
+      7417617|Порхачева Полина   |Эля РОП     |         8.3692857142857143|
+     11394134|Софья Боднар       |Эля РОП     |        23.6365346534653465|
+
+Опять же нужно понимать, что среднее время по минутам это скорее всего коэффициент. Из-за особенностей арифметических расчетов
+и округления. Т.е. время 21.40 означает не 21 минуту 40 секунд. А означает 21 минуту 24 секунды. (60 сек. * 0.40 = 0.24 сек.)
