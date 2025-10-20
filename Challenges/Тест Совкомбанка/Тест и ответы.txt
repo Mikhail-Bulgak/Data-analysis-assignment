@@ -1,0 +1,96 @@
+Задание №1.
+В данном блоке заданий у Вас имеются 2 таблицы:
+CLIENTS:   
+Client_id	Client_Type	Client Address	Client_FIO
+1	Пенсионер	Г.Москва, ул. Строителей, 3-2-234	Иванов И.И
+2	Учащийся	Г.Подольск, ул. Ленина, 13	Петров П.П.
+3	Работающий	Г.Пенза, ул. Василевского, 15	Кирилов К.К.
+4	Работ. Пенсионер	Р.п. Лунино, ул. Главная, 18	Сидоров С.С.
+…	…	…	…
+DOCUMENTS:
+Client_id	Valid_from	Valid_to	Document_type	Document_no	Income
+1	2010-01-01	2010-12-01	Паспорт	111111-11	10 000
+1	2012-12-01	2012-06-01	Паспорт	111111-11	11 000
+1	2012-06-01	2220-01-01	Паспорт	333333-33	11 000
+2	2001-01-01	2220-01-01	Паспорт	123123-44	5 000
+…					
+В таблице с документами есть версионность, т.е. мы храним всю историю документов, которая у нас есть. Например, у клиента с №1:
+Client_id	Valid_from	Valid_to	Document_type	Document_no	Income
+1	2010-01-01	2010-12-01	Паспорт	111111-11	10 000
+1	2012-12-01	2012-06-01	Паспорт	111111-11	11 000
+1	2012-06-01	2220-01-01	Паспорт	333333-33	11 000
+с 01.янв.2010 по 01.дек.2010 года был документ 111111-11, доход 10 000
+с 01.дек.2010 по 01.июн.2012 документ не меняется, доход меняется 11 000
+с 01.июн.2012 по текущий момент, документ стал 333333-33, доход не изменился, 11 000
+
+Обратите внимание, 2220-01-01 – фиктивная, «бесконечно большая дата». По ней мы идентифицируем, текущую/последнюю версию документа.
+Задачи:
+1)	Напишите запрос, который вернет ФИО Клиентов по всем пенсионерам не из Москвы.
+2)	Напишите запрос, который вернет: ФИО Клиентов, № документа (текущую/последнюю версию документа)
+3)	Напишите запрос, который вернет: client_id, у которых в таблице с документами нет действующей версии (записи с valid_to=’2220-01-01’)
+4)	Напишите запрос, который вернет: client_id, у которых в таблице с документами более одной действующей версии (записи с valid_to=’2220-01-01’)
+5)	Напишите запрос, который вернет: ФИО Клиентов, у которых нет ни одной записи о документах.
+
+Задание № 2.
+Необходимо объяснить, что попадет в результаты выборки. 
+Select * From (
+  Select 
+    T.*, 
+    agr.Ageement_Number,
+    Case Opkind_Rk 
+      When 4 Then 'Accrued ATM Fee'
+      When 5 Then 'Accrued POS Fee'
+      When 8 Then 'Cash Withdrawal Fee'
+    End As Opkind,
+    Row_Number() Over (Partition By Opkind_Rk Order By Oper_Date) Rn
+  From ARA.Ft_Ar_Posting_Prepared T,
+     MRA.Dm_Agreement_F agr
+  Where 
+    CURRENT_TIMESTAMP Between agr.Data_Actual_Date and agr.Data_actual_End_Date 
+     And agr.Agreement_Rk= T.Agreement_Rk
+    And T.Oper_Date Between Date'2013-01-01' And  Date'2013-01-15'
+    And T.Opkind_Rk In (4,5,8)
+) 
+where rn <= 100
+
+
+
+Ответы
+Задание 1.
+
+1.
+SELECT Client_FIO
+FROM CLIENTS 
+WHERE Client_Type = ‘Пенсионер’ AND Client_Address NOT LIKE ‘%Москва%’
+
+2. 
+SELECT c.Client_FIO, d.Document_no
+FROM DOCUMENTS d LEFT JOIN CLIENTS c on d.Client_id = c.Client_id
+WHERE d.Valid_to=’2220-01-01’
+
+3.
+SELECT Client_id
+FROM DOCUMENTS
+GROUP BY Client_id
+HAVING MAX(Valid_to) <> ’2220-01-01’
+
+4.
+SELECT Client_id
+FROM DOCUMENTS
+WHERE Valid_to = ’2220-01-01’
+GROUP BY Client_id
+HAVING COUNT(Client_id) > 1
+
+
+5.
+SELECT Client_FIO
+FROM CLIENTS
+WHERE Client_id NOT IN (
+SELECT DISTINCT (Client_id)
+FROM DOCUMENTS)
+
+
+
+Задание 2.
+
+В итоге будут все столбцы из таблицы ARA.Ft_Ar_Posting_Prepared , один столбец из второй таблицы (столбец Ageement_Number), столбец с расшифровкой операции, выполненный через CASE, и собственно, порядковый номер записи, выполненный через оконную функцию. При этом в вывод попадут только записи с порядковыми номерами от 1 по 100. Благодаря оконной функции порядковые номера расспределяются для каждой операции по возрастанию даты от 01.01.2013 до 15.01.2013 . В результате мы увидем первые сто записей для каждой операции (4, 5, 8).
